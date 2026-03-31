@@ -48,6 +48,26 @@ def log_exception(context, exc):
     print(traceback.format_exc(), flush=True)
 
 
+def to_json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): to_json_safe(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_json_safe(item) for item in value]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        if np.isnan(value) or np.isinf(value):
+            return None
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if pd.isna(value):
+        return None
+    return value
+
+
 def get_cached_data(ticker):
     if ticker not in cached_data:
         log_update(f"[DATA] Fetching fresh data for {ticker}")
@@ -74,6 +94,11 @@ def get_benchmark_for_ticker(ticker):
 @app.route("/")
 def index():
     return render_template("index.html", universe=universe, strategy_labels=STRATEGY_LABELS)
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return ("", 204)
 
 
 @app.route("/api/health", methods=["GET"])
@@ -269,13 +294,14 @@ def run_walk_forward_api():
                 if col in summary_df.columns:
                     summary_df[col] = summary_df[col].astype(str)
 
-        response = jsonify(
+        response_payload = to_json_safe(
             {
                 "summary": summary_df.to_dict(orient="records"),
                 "final_wfe": result["final_wfe"],
                 "overfit_flag": result["overfit_flag"],
             }
         )
+        response = jsonify(response_payload)
         log_update(f"[API] /api/run_walk_forward completed for {ticker} with {len(summary_df)} folds")
         return response
     except Exception as exc:
