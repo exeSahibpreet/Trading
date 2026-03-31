@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Adaptive Stock Bot Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="brand-block">
+                <p class="eyebrow">Adaptive Trading Workspace</p>
+                <h1>Stock Bot Control Room</h1>
+                <p class="subtitle">Backtest the reduced strategy stack and let the engine rotate between strategies based on forecasted market behavior.</p>
+            </div>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="single-tab">Single Backtest</button>
+                <button class="tab-btn" data-tab="ranking-tab">Strategy Ranking</button>
+                <button class="tab-btn" data-tab="regime-tab">Adaptive Engine</button>
+                <button class="tab-btn" data-tab="walkforward-tab">Walk-Forward</button>
+            </div>
+            <form id="backtest-form">
+                <div class="form-group" id="strategy-block">
+                    <label for="strategy">Strategy</label>
+                    <select id="strategy" name="strategy">
+                        {% for key, label in strategy_labels.items() %}
+                        <option value="{{ key }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="index">Asset Symbol</label>
+                    <select id="index" name="index">
+                        {% for t in universe %}
+                        <option value="{{ t }}">{{ t }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Trading Mode</label>
+                    <div class="mode-toggle">
+                        <input type="radio" id="equity" name="mode" value="equity" checked>
+                        <label for="equity" class="toggle-btn">Equity</label>
+                        <input type="radio" id="fno" name="mode" value="fno">
+                        <label for="fno" class="toggle-btn">F&amp;O</label>
+                    </div>
+                </div>
+                <div class="form-group hidden" id="regime-toggles">
+                    <label>Adaptive Strategy Pool</label>
+                    <div class="toggle-list">
+                        {% for key, label in strategy_labels.items() %}
+                        <label class="check-pill">
+                            <input type="checkbox" name="en_{{ key }}" checked>
+                            <span>{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="form-group hidden" id="walkforward-controls">
+                    <label class="check-pill">
+                        <input type="checkbox" name="anchored_walkforward">
+                        <span>Use anchored walk-forward</span>
+                    </label>
+                </div>
+                <button type="submit" class="btn-primary" id="run-btn">Run Selected Strategy</button>
+            </form>
+            <div class="info-card" id="info-note">
+                <p class="info-title">Model notes</p>
+                <p>This build keeps the app’s features intact, but ORB, VWAP, and rebalancing are backtested with daily-data proxies so they remain usable across long history windows.</p>
+            </div>
+        </aside>
+        <main class="main-content">
+            <section class="hero">
+                <div>
+                    <p class="eyebrow">Five Strategy Stack</p>
+                    <h2 id="page-title">Backtest and compare the new streamlined bot</h2>
+                </div>
+                <div class="hero-badges">
+                    <span class="hero-chip">Trend Following</span>
+                    <span class="hero-chip">Mean Reversion</span>
+                    <span class="hero-chip">ORB</span>
+                    <span class="hero-chip">Index Rebalancing</span>
+                    <span class="hero-chip">VWAP</span>
+                </div>
+            </section>
+            <div id="loading" class="hidden">
+                <div class="spinner"></div>
+                <p>Running the backtest engine and market forecast router...</p>
+            </div>
+            <div id="error-banner" class="error-banner hidden"></div>
+            <div id="single-view" class="view-panel hidden">
+                <div id="health-dashboard" class="badge-row"></div>
+                <div class="metrics-grid six-up">
+                    <div class="card metric-card"><h3>Test PnL | Final Capital</h3><p id="test-pnl" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Sharpe | Sortino</h3><p id="test-sharpe" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Calmar | WFE</h3><p id="test-calmar" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Max Drawdown | Recovery</h3><p id="test-dd" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Win Rate | Trades</h3><p id="test-winrate" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Recovery Factor</h3><p id="test-rec-fac" class="value">--</p></div>
+                </div>
+                <div class="charts-grid">
+                    <div class="card chart-card">
+                        <h3>Train Split</h3>
+                        <div id="train-chart" class="chart"></div>
+                    </div>
+                    <div class="card chart-card">
+                        <h3>Test Split</h3>
+                        <div id="test-chart" class="chart"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="ranking-view" class="view-panel hidden">
+                <div class="card ranking-card">
+                    <h3>Out-of-Sample Strategy Ranking</h3>
+                    <table class="ranking-table" id="ranking-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Strategy</th>
+                                <th>Score</th>
+                                <th>Final Capital</th>
+                                <th>Trades</th>
+                                <th>Calmar | Sharpe</th>
+                                <th>Max DD</th>
+                                <th>WFE</th>
+                                <th>Flags</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="card chart-card">
+                    <h3>Equity Curve Comparison</h3>
+                    <div id="compare-chart" class="chart tall-chart"></div>
+                </div>
+            </div>
+            <div id="regime-view" class="view-panel hidden">
+                <div class="metrics-grid four-up">
+                    <div class="card metric-card"><h3>Combined PnL | Final Capital</h3><p id="port-pnl" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Sharpe Ratio</h3><p id="port-sharpe" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Calmar Ratio</h3><p id="port-calmar" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Max Drawdown</h3><p id="port-dd" class="value">--</p></div>
+                </div>
+                <div class="charts-grid single">
+                    <div class="card chart-card">
+                        <h3>Adaptive Equity With Forecasted Regimes</h3>
+                        <div id="port-equity-chart" class="chart tall-chart"></div>
+                    </div>
+                </div>
+                <div class="dual-grid">
+                    <div class="card ranking-card">
+                        <h3>Regime Performance</h3>
+                        <table class="ranking-table" id="regime-pnl-table">
+                            <thead><tr><th>Forecasted Regime</th><th>Compounded PnL</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div class="card ranking-card">
+                        <h3>Forecasted Strategy Rotation</h3>
+                        <table class="ranking-table" id="strategy-rotation-table">
+                            <thead><tr><th>Strategy</th><th>Occurrences</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card chart-card">
+                    <h3>Sub-Strategy Equity Curves</h3>
+                    <div id="port-strat-chart" class="chart tall-chart"></div>
+                </div>
+            </div>
+            <div id="walkforward-view" class="view-panel hidden">
+                <div class="metrics-grid four-up">
+                    <div class="card metric-card"><h3>Walk-Forward Efficiency</h3><p id="wf-final-wfe" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Overfit Flag</h3><p id="wf-overfit" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Folds</h3><p id="wf-fold-count" class="value">--</p></div>
+                    <div class="card metric-card"><h3>Total Test Profit</h3><p id="wf-total-profit" class="value">--</p></div>
+                </div>
+                <div class="card ranking-card">
+                    <h3>Walk-Forward Test Profit Breakdown</h3>
+                    <table class="ranking-table" id="walkforward-table">
+                        <thead>
+                            <tr>
+                                <th>Fold</th>
+                                <th>Training Period</th>
+                                <th>Testing Period</th>
+                                <th>Test Profit</th>
+                                <th>Profit Factor</th>
+                                <th>Dominant Strategy</th>
+                                <th>WFE</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script>
+        window.strategyLabels = {{ strategy_labels | tojson }};
+    </script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
