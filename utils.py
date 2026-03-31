@@ -4,18 +4,28 @@ import numpy as np
 
 def fetch_data(ticker, start='2014-01-01', end='2024-01-01'):
     try:
-        df = yf.download(ticker, start=start, end=end, progress=False)
+        print(f"[YF] Downloading {ticker} from {start} to {end}", flush=True)
+        df = yf.download(
+            ticker,
+            start=start,
+            end=end,
+            progress=False,
+            threads=False,
+            timeout=20,
+            auto_adjust=False,
+        )
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
-        
+
         df.dropna(inplace=True)
         if len(df) == 0:
-            return df
+            raise ValueError(f"No price data returned for {ticker}.")
         df['ATR'] = calculate_atr(df)
         df.dropna(inplace=True)
+        print(f"[YF] Downloaded {len(df)} rows for {ticker}", flush=True)
         return df
     except Exception as e:
-        print(f"Error fetching {ticker}: {e}")
+        print(f"[YF][ERROR] Failed to fetch {ticker}: {e}", flush=True)
         return pd.DataFrame()
 
 def calculate_atr(df, window=14):

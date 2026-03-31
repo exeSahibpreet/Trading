@@ -27,11 +27,17 @@ async function apiRequest(endpoint, payload) {
     const url = getApiUrl(endpoint);
     console.log(`[request] POST ${url}`, payload);
 
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
+    let response;
+    try {
+        response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch (networkError) {
+        console.error('[response] Network/proxy error', networkError);
+        throw new Error('Could not reach the Flask server. In Colab, make sure the app is still running and the proxy URL is active.');
+    }
 
     const rawText = await response.text();
     console.log(`[response] ${response.status} ${url}`);
@@ -41,6 +47,9 @@ async function apiRequest(endpoint, payload) {
         data = rawText ? JSON.parse(rawText) : {};
     } catch (parseError) {
         console.error('[response] Non-JSON payload received', rawText.slice(0, 500));
+        if (response.status === 502) {
+            throw new Error('Colab proxy returned 502 Bad Gateway. The Flask app likely crashed, restarted, or took too long to answer.');
+        }
         throw new Error(
             `Server returned ${response.status} ${response.statusText}. ` +
             `Expected JSON but received something else, often an HTML error/proxy page.`

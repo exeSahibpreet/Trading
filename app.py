@@ -52,6 +52,11 @@ def get_cached_data(ticker):
     if ticker not in cached_data:
         log_update(f"[DATA] Fetching fresh data for {ticker}")
         cached_data[ticker] = fetch_data(ticker, start="2014-01-01", end=date.today().isoformat())
+        if cached_data[ticker].empty:
+            raise ValueError(
+                f"Could not load market data for {ticker}. "
+                "Please check internet access in Colab and try again."
+            )
         cached_data[ticker].attrs["instrument_type"] = "index" if str(ticker).startswith("^") else "stock"
     else:
         log_update(f"[DATA] Using cached data for {ticker}")
@@ -69,6 +74,11 @@ def get_benchmark_for_ticker(ticker):
 @app.route("/")
 def index():
     return render_template("index.html", universe=universe, strategy_labels=STRATEGY_LABELS)
+
+
+@app.route("/api/health", methods=["GET"])
+def healthcheck():
+    return jsonify({"status": "ok"})
 
 
 def run_single_strategy(strategy_name, df_train, df_test, mode):
@@ -283,4 +293,4 @@ def handle_unexpected_exception(exc):
 
 if __name__ == "__main__":
     log_update("[APP] Starting Flask app on 0.0.0.0:5000")
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=False, use_reloader=False, threaded=True, host="0.0.0.0", port=5000)
