@@ -19,6 +19,42 @@ function clearError() {
     banner.classList.add('hidden');
 }
 
+function getApiUrl(endpoint) {
+    return new URL(endpoint.replace(/^\//, ''), window.location.href).toString();
+}
+
+async function apiRequest(endpoint, payload) {
+    const url = getApiUrl(endpoint);
+    console.log(`[request] POST ${url}`, payload);
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+
+    const rawText = await response.text();
+    console.log(`[response] ${response.status} ${url}`);
+
+    let data;
+    try {
+        data = rawText ? JSON.parse(rawText) : {};
+    } catch (parseError) {
+        console.error('[response] Non-JSON payload received', rawText.slice(0, 500));
+        throw new Error(
+            `Server returned ${response.status} ${response.statusText}. ` +
+            `Expected JSON but received something else, often an HTML error/proxy page.`
+        );
+    }
+
+    if (!response.ok) {
+        console.error('[response] API error', data);
+        throw new Error(data.error || `Request failed with status ${response.status}.`);
+    }
+
+    return data;
+}
+
 function toggleViews(activeViewId = null) {
     ['single-view', 'ranking-view', 'regime-view', 'walkforward-view'].forEach((id) => {
         document.getElementById(id).classList.toggle('hidden', id !== activeViewId);
@@ -68,23 +104,11 @@ document.getElementById('backtest-form').addEventListener('submit', async (event
     try {
         if (currentMode === 'single-tab') {
             const strategy = formData.get('strategy');
-            const response = await fetch('/api/run_backtest', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ strategy, index, mode })
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Backtest failed.');
+            const data = await apiRequest('api/run_backtest', { strategy, index, mode });
             renderSingleResults(data);
             toggleViews('single-view');
         } else if (currentMode === 'ranking-tab') {
-            const response = await fetch('/api/rank_strategies', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ index, mode })
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Ranking failed.');
+            const data = await apiRequest('api/rank_strategies', { index, mode });
             renderRankingResults(data.ranked || []);
             toggleViews('ranking-view');
         } else if (currentMode === 'regime-tab') {
@@ -93,28 +117,17 @@ document.getElementById('backtest-form').addEventListener('submit', async (event
                 toggles[strategyKey] = formData.get(`en_${strategyKey}`) === 'on';
             });
 
-            const response = await fetch('/api/run_portfolio', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ index, mode, toggles })
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Adaptive run failed.');
+            const data = await apiRequest('api/run_portfolio', { index, mode, toggles });
             renderRegimeResults(data);
             toggleViews('regime-view');
         } else {
             const anchored = formData.get('anchored_walkforward') === 'on';
-            const response = await fetch('/api/run_walk_forward', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ index, mode, anchored })
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Walk-forward run failed.');
+            const data = await apiRequest('api/run_walk_forward', { index, mode, anchored });
             renderWalkForwardResults(data);
             toggleViews('walkforward-view');
         }
     } catch (error) {
+        console.error('[ui] Request failed', error);
         showError(error.message || 'Something went wrong.');
     } finally {
         document.getElementById('loading').classList.add('hidden');

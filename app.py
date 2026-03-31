@@ -1,3 +1,5 @@
+import logging
+import traceback
 from datetime import date
 
 import numpy as np
@@ -12,6 +14,7 @@ from utils import compute_metrics, fetch_data, rank_strategies, train_test_split
 from walk_forward import run_walk_forward
 
 app = Flask(__name__)
+app.logger.setLevel(logging.INFO)
 
 cached_data = {}
 
@@ -33,10 +36,25 @@ universe = [
 STRATEGY_LIST = list(STRATEGY_REGISTRY.keys())
 
 
+def log_update(message):
+    app.logger.info(message)
+    print(message, flush=True)
+
+
+def log_exception(context, exc):
+    message = f"[ERROR] {context}: {exc}"
+    app.logger.exception(message)
+    print(message, flush=True)
+    print(traceback.format_exc(), flush=True)
+
+
 def get_cached_data(ticker):
     if ticker not in cached_data:
+        log_update(f"[DATA] Fetching fresh data for {ticker}")
         cached_data[ticker] = fetch_data(ticker, start="2014-01-01", end=date.today().isoformat())
         cached_data[ticker].attrs["instrument_type"] = "index" if str(ticker).startswith("^") else "stock"
+    else:
+        log_update(f"[DATA] Using cached data for {ticker}")
     return cached_data[ticker]
 
 
@@ -83,12 +101,15 @@ def run_backtest():
     mode = req.get("mode", "equity")
 
     try:
+        log_update(f"[API] /api/run_backtest strategy={strategy_name} ticker={ticker} mode={mode}")
         df = get_cached_data(ticker)
         df_train, df_test = train_test_split(df)
         res = run_single_strategy(strategy_name, df_train, df_test, mode)
         res["strategy_label"] = STRATEGY_LABELS.get(strategy_name, strategy_name)
+        log_update(f"[API] /api/run_backtest completed for {strategy_name} on {ticker}")
         return jsonify(res)
     except Exception as exc:
+        log_exception("/api/run_backtest failed", exc)
         return jsonify({"error": str(exc)}), 500
 
 
@@ -99,6 +120,7 @@ def rank_strategies_api():
     mode = req.get("mode", "equity")
 
     try:
+        log_update(f"[API] /api/rank_strategies ticker={ticker} mode={mode}")
         df = get_cached_data(ticker)
         df_train, df_test = train_test_split(df)
 
@@ -118,8 +140,10 @@ def rank_strategies_api():
             )
 
         ranked = rank_strategies(results)
+        log_update(f"[API] /api/rank_strategies completed for {ticker} with {len(ranked)} strategies")
         return jsonify({"ranked": ranked})
     except Exception as exc:
+        log_exception("/api/rank_strategies failed", exc)
         return jsonify({"error": str(exc)}), 500
 
 
@@ -131,6 +155,8 @@ def run_portfolio_api():
     toggles = req.get("toggles", {})
 
     try:
+        enabled_count = sum(1 for strategy_key in STRATEGY_LIST if toggles.get(strategy_key, True) is not False)
+        log_update(f"[API] /api/run_portfolio ticker={ticker} mode={mode} enabled_strategies={enabled_count}")
         df = get_cached_data(ticker)
         df_train, df_test = train_test_split(df)
 
@@ -190,8 +216,10 @@ def run_portfolio_api():
                 "hurst": test_regimes_df["hurst"].reindex(combined_test.index).fillna(0).tolist() if len(combined_test) > 0 else [],
             },
         }
+        log_update(f"[API] /api/run_portfolio completed for {ticker}")
         return jsonify(result)
     except Exception as exc:
+        log_exception("/api/run_portfolio failed", exc)
         return jsonify({"error": str(exc)}), 500
 
 
@@ -206,6 +234,10 @@ def run_walk_forward_api():
     purge_size = int(req.get("purge_size", 5))
 
     try:
+        log_update(
+            f"[API] /api/run_walk_forward ticker={ticker} mode={mode} anchored={anchored} "
+            f"train_size={train_size} test_size={test_size} purge_size={purge_size}"
+        )
         df = get_cached_data(ticker)
         benchmark_ticker = get_benchmark_for_ticker(ticker)
         benchmark_df = get_cached_data(benchmark_ticker)
@@ -227,16 +259,28 @@ def run_walk_forward_api():
                 if col in summary_df.columns:
                     summary_df[col] = summary_df[col].astype(str)
 
-        return jsonify(
+        response = jsonify(
             {
                 "summary": summary_df.to_dict(orient="records"),
                 "final_wfe": result["final_wfe"],
                 "overfit_flag": result["overfit_flag"],
             }
         )
+        log_update(f"[API] /api/run_walk_forward completed for {ticker} with {len(summary_df)} folds")
+        return response
     except Exception as exc:
+        log_exception("/api/run_walk_forward failed", exc)
         return jsonify({"error": str(exc)}), 500
 
 
+@app.errorhandler(Exception)
+def handle_unexpected_exception(exc):
+    if request.path.startswith("/api/"):
+        log_exception(f"Unhandled exception on {request.path}", exc)
+        return jsonify({"error": str(exc)}), 500
+    raise exc
+
+
 if __name__ == "__main__":
+    log_update("[APP] Starting Flask app on 0.0.0.0:5000")
     app.run(debug=True, host="0.0.0.0", port=5000)
