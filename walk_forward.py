@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 from itertools import product
 from multiprocessing import Pool, cpu_count
+import time
 
 import numpy as np
 import pandas as pd
@@ -145,6 +146,7 @@ def optimize_fold_parameters(
     max_workers=None,
 ):
     candidates = list(_generate_parameter_grid(param_space))
+    print(f"[WFO] Evaluating {len(candidates)} parameter candidates", flush=True)
     tasks = [
         (train_df, benchmark_train, candidate, mode, initial_capital)
         for candidate in candidates
@@ -176,11 +178,11 @@ def run_walk_forward(
 ):
     if param_space is None:
         param_space = {
-            "z_trigger_level": [1.0, 1.25, 1.5],
-            "score_boost_multiplier": [0.25, 0.5, 0.75],
-            "slippage_atr_multiplier": [0.05, 0.1, 0.15],
-            "kelly_fraction": [0.1, 0.25],
-            "regime_cooldown_bars": [3, 5],
+            "z_trigger_level": [1.0, 1.25],
+            "score_boost_multiplier": [0.25, 0.5],
+            "slippage_atr_multiplier": [0.1],
+            "kelly_fraction": [0.1],
+            "regime_cooldown_bars": [3],
         }
 
     folds = build_fold_schedule(
@@ -190,13 +192,24 @@ def run_walk_forward(
         purge_size=purge_size,
         anchored=anchored,
     )
+    print(
+        f"[WFO] Starting walk-forward with {len(folds)} folds, "
+        f"train_size={train_size}, test_size={test_size}, purge_size={purge_size}, anchored={anchored}",
+        flush=True,
+    )
 
     summaries = []
     detailed_results = []
 
     for fold_number, fold in enumerate(folds, start=1):
+        fold_started = time.time()
         train_df = data.iloc[fold["train_start"] : fold["train_end"]].copy()
         test_df = data.iloc[fold["test_start"] : fold["test_end"]].copy()
+        print(
+            f"[WFO] Fold {fold_number}/{len(folds)} "
+            f"train_rows={len(train_df)} test_rows={len(test_df)}",
+            flush=True,
+        )
 
         benchmark_train = None
         benchmark_test = None
@@ -227,6 +240,11 @@ def run_walk_forward(
             adaptive_params=best_params["params"],
             mode=mode,
             initial_capital=initial_capital,
+        )
+        print(
+            f"[WFO] Fold {fold_number} complete in {time.time() - fold_started:.1f}s "
+            f"best_params={best_params['params']}",
+            flush=True,
         )
 
         train_sortino = train_result["metrics"]["sortino_objective"]
@@ -273,6 +291,7 @@ def run_walk_forward(
 
     summary_df = pd.DataFrame(summaries)
     final_wfe = float(summary_df["wfe"].mean()) if not summary_df.empty else 0.0
+    print(f"[WFO] Finished walk-forward final_wfe={final_wfe:.3f}", flush=True)
 
     return {
         "summary": summary_df,

@@ -264,9 +264,9 @@ def run_walk_forward_api():
     ticker = req.get("index", "^NSEI")
     mode = req.get("mode", "equity")
     anchored = bool(req.get("anchored", False))
-    train_size = int(req.get("train_size", 504))
-    test_size = int(req.get("test_size", 252))
-    purge_size = int(req.get("purge_size", 5))
+    train_size = int(req.get("train_size", 252))
+    test_size = int(req.get("test_size", 126))
+    purge_size = int(req.get("purge_size", 3))
 
     try:
         log_update(
